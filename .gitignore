@@ -202,3 +202,11 @@ test_upload.txt
 test_voice.ogg
 sticker.webp
 two.png
+
+# PEM / key files
+*.pem
+*.key
+*.crt
+*.cer
+*.p12
+*.pfx
