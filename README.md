@@ -7,7 +7,63 @@
 [![Python Lint & Format Check](https://github.com/chigwell/telegram-mcp/actions/workflows/python-lint-format.yml/badge.svg)](https://github.com/chigwell/telegram-mcp/actions/workflows/python-lint-format.yml)
 [![Docker Build & Compose Validation](https://github.com/chigwell/telegram-mcp/actions/workflows/docker-build.yml/badge.svg)](https://github.com/chigwell/telegram-mcp/actions/workflows/docker-build.yml)
 
----
+## 🔀 Fork Changes
+
+> **This is a fork of [chigwell/telegram-mcp](https://github.com/chigwell/telegram-mcp)** — a fantastic Telegram MCP server built by [@chigwell](https://github.com/chigwell) and [@l1v0n1](https://github.com/l1v0n1).
+> > All original tools and credit belong to the upstream authors.
+> >
+> > ### What this fork adds
+> >
+> > The upstream repo runs the MCP server locally (Claude Desktop / Cursor on your laptop). **This fork adds everything needed to run it remotely on a VPS**, accessible over HTTPS by any MCP client from anywhere — without keeping your laptop on.
+> >
+> > #### 🐳 Production Docker Setup (`Dockerfile.prod` + `docker-compose.prod.yml`)
+> >
+> > **Problem:** The upstream Dockerfile runs the MCP in stdio/local mode. There was no production-ready container config for running it as a long-lived HTTPS service that remote MCP clients (Claude.ai, Cursor, etc.) can connect to.
+> >
+> > **Solution:** Added a hardened `Dockerfile.prod` (Alpine-based, non-root user, SSE transport, health check) and `docker-compose.prod.yml` that binds the container to `127.0.0.1:8000` only — so it's never exposed directly to the internet.
+> >
+> > #### 🌐 Nginx Reverse Proxy Config (`nginx/nginx.conf`)
+> >
+> > **Problem:** Running the MCP on a public server without a reverse proxy means no TLS, no authentication, and the raw MCP port exposed to the internet.
+> >
+> > **Solution:** Added a production Nginx config that:
+> > - Terminates HTTPS (via Let's Encrypt / Certbot) and redirects HTTP → HTTPS
+> > - - Enforces HTTP Basic Auth (bcrypt via `htpasswd`) so only password-holders can connect
+> >   - - Correctly handles SSE long-lived connections (`proxy_buffering off`, 3600s timeouts)
+> >     - - Exposes only `/sse`, `/messages`, and `/health` — blocks everything else
+> >       - - Sets `Host: localhost` on proxied requests to satisfy the MCP's DNS-rebinding protection
+> >         -
+> >         #### 🛠️ One-Shot EC2/VPS Bootstrap (`deploy/setup-ec2.sh`)
+> >
+> >         **Problem:** Setting up Docker, Nginx, Certbot, and UFW firewall on a fresh cloud server requires many manual steps that are easy to get wrong.
+> >
+> >         **Solution:** A single idempotent shell script that bootstraps a fresh Ubuntu 22.04/24.04 (or Amazon Linux 2023) instance end-to-end: installs Docker, Nginx, Certbot, clones the repo, drops the Nginx config in place, and configures the UFW firewall. Run it once, fill in `.env`, and you're live.
+> >
+> >         #### 📖 Step-by-Step Deployment Guide (`commands.md` + `deploy/README.md`)
+> >
+> >         **Problem:** No documentation existed for deploying this MCP to a remote server that multiple people can share.
+> >
+> >         **Solution:** Complete, copy-paste-ready command reference covering: DNS setup, cloud firewall rules, Nginx config, Let's Encrypt TLS, HTTP Basic Auth password management, Docker build/run, smoke testing, redeployment, and a full troubleshooting section (covering real edge cases like broken `docker-buildx` on Amazon Linux, Cloudflare tunnel SSE buffering, `Invalid Host header` from MCP's DNS-rebinding middleware, and more).
+> >
+> >         #### 🔧 MCP Transport Security Patch (`patches/main-py-transport-security.patch`)
+> >
+> >         **Problem:** When Nginx proxies requests, it sets `Host: localhost` — which trips MCP's built-in DNS-rebinding protection and causes `421 Misdirected Request` errors.
+> >
+> >         **Solution:** Patch for `main.py` that disables DNS-rebinding protection (`TransportSecuritySettings(enable_dns_rebinding_protection=False)`), since security at the Nginx+TLS+BasicAuth layer is strictly enforced instead. The patch file documents exactly what changed and why.
+> >
+> >         #### 🔒 Credentials Security (`.gitignore` hardening)
+> >
+> >         **Problem:** SSL/TLS certificate and private key files (`.pem`, `.key`, `.crt`, `.cer`, `.p12`, `.pfx`) were not gitignored, risking accidental commits of cryptographic secrets when working with Let's Encrypt or SSH keys on the server.
+> >
+> >         **Solution:** Added these patterns to `.gitignore` to prevent accidental exposure.
+> >
+> >         #### ✅ CI Workflows (`.github/workflows/`)
+> >
+> >         Added GitHub Actions workflows for Python linting/formatting and Docker build validation, keeping the fork green and the code quality consistent.
+> >
+> >         ---
+> >
+> >         ---
 
 ## 🤖 MCP in Action
 
