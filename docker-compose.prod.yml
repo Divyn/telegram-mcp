@@ -1,0 +1,25 @@
+services:
+  telegram-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    container_name: telegram-mcp
+    env_file:
+      - .env
+    environment:
+      - MCP_TRANSPORT=sse
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=8000
+    ports:
+      - "127.0.0.1:8000:8000"   # bind to loopback only — Nginx proxies from outside
+    volumes:
+      - telegram_sessions:/app/sessions
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  telegram_sessions:

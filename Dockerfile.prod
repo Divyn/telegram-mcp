@@ -1,0 +1,36 @@
+FROM python:3.13-alpine
+
+WORKDIR /app
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# Install build dependencies needed for some packages
+RUN apk add --no-cache gcc musl-dev libffi-dev
+
+COPY requirements.txt ./
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+COPY main.py .
+COPY session_string_generator.py .
+
+RUN adduser --disabled-password --gecos "" appuser && chown -R appuser:appuser /app
+USER appuser
+
+ENV TELEGRAM_API_ID=""
+ENV TELEGRAM_API_HASH=""
+ENV TELEGRAM_SESSION_NAME="telegram_mcp_session"
+ENV TELEGRAM_SESSION_STRING=""
+
+# Transport configuration
+ENV MCP_TRANSPORT="sse"
+ENV MCP_HOST="0.0.0.0"
+ENV MCP_PORT="8000"
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD wget -qO- http://localhost:8000/health 2>/dev/null || exit 1
+
+CMD ["python", "main.py", "--transport", "sse", "--host", "0.0.0.0", "--port", "8000"]

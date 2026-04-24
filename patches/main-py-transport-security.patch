@@ -1,0 +1,121 @@
+# Patch: disable MCP's DNS-rebinding Host-header check for reverse-proxy use
+#
+# WHY
+# ---
+# The upstream `mcp` SDK (TransportSecurityMiddleware) rejects any request
+# whose Host header isn't in a hardcoded allowlist. When you put nginx in
+# front of the MCP — which sets `Host: localhost` when proxying — every
+# request gets a 421 Misdirected Request:
+#
+#   WARNING  Invalid Host header: localhost    transport_security.py:64
+#   GET /sse HTTP/1.1 421 Misdirected Request
+#
+# `TrustedHostMiddleware(allowed_hosts=["*"])` in Starlette does NOT help —
+# the check is inside FastMCP's own ASGI app, before Starlette middleware.
+# And monkey-patching the `mcp.server.transport_security` MODULE doesn't work
+# either, because the check is an INSTANCE method on
+# TransportSecurityMiddleware.
+#
+# FIX
+# ---
+# 1. Import `TransportSecuritySettings`.
+# 2. Override three class methods to always pass.
+# 3. Pass `transport_security=TransportSecuritySettings(
+#       enable_dns_rebinding_protection=False)` to the FastMCP constructor.
+#
+# Host/origin discipline is enforced at the nginx + TLS + Basic Auth layer
+# instead, which is the standard reverse-proxy pattern.
+#
+# HOW TO APPLY
+# ------------
+# Open main.py and make the changes below manually. The file is large, so
+# hand-editing is easier than trying to use `patch`.
+
+
+# ---------------------------------------------------------------------------
+# STEP 1  —  After the existing FastMCP / McpError imports, add one line
+# ---------------------------------------------------------------------------
+# Find (near line 19-22 in the upstream file):
+#
+#     from mcp.server.fastmcp import FastMCP, Context
+#     from mcp.types import ToolAnnotations
+#     from mcp.shared.exceptions import McpError
+#
+# Change to:
+#
+#     from mcp.server.fastmcp import FastMCP, Context
+#     from mcp.server.transport_security import TransportSecuritySettings
+#     from mcp.types import ToolAnnotations
+#     from mcp.shared.exceptions import McpError
+
+
+# ---------------------------------------------------------------------------
+# STEP 2  —  Add the settings + class-level override just before FastMCP()
+# ---------------------------------------------------------------------------
+# Find:
+#
+#     mcp = FastMCP("telegram")
+#
+# Replace with:
+
+# --- BEGIN: reverse-proxy DNS-rebinding fix ---
+# MCP ships DNS-rebinding protection that rejects any Host header not in a
+# hardcoded allowlist. This breaks public-IP / domain deployments behind a
+# reverse proxy. We disable it both by passing proper FastMCP settings AND
+# by neutering the class's instance methods, so any future version of the
+# MCP SDK still lets requests through.
+_TRANSPORT_SECURITY = TransportSecuritySettings(
+    enable_dns_rebinding_protection=False,
+)
+
+
+def _disable_mcp_host_checks() -> None:
+    try:
+        from mcp.server.transport_security import TransportSecurityMiddleware
+
+        def _always_ok(self, *_args: object, **_kwargs: object) -> bool:
+            return True
+
+        async def _always_validate(self, *_args: object, **_kwargs: object):
+            return None  # no Response => request is allowed through
+
+        TransportSecurityMiddleware._validate_host = _always_ok        # type: ignore[assignment]
+        TransportSecurityMiddleware._validate_origin = _always_ok      # type: ignore[assignment]
+        TransportSecurityMiddleware.validate_request = _always_validate  # type: ignore[assignment]
+    except Exception:
+        pass
+
+
+_disable_mcp_host_checks()
+
+mcp = FastMCP("telegram", transport_security=_TRANSPORT_SECURITY)
+# --- END: reverse-proxy DNS-rebinding fix ---
+
+
+# ---------------------------------------------------------------------------
+# STEP 3  —  Remove the TrustedHostMiddleware wrappers in `_main`
+# ---------------------------------------------------------------------------
+# Search for `TrustedHostMiddleware` in main.py. You'll find two places (one
+# in the SSE branch, one in the streamable-http branch) that look like:
+#
+#     from starlette.middleware.trustedhost import TrustedHostMiddleware
+#     ...
+#     sse_app = mcp.sse_app()
+#     sse_app = TrustedHostMiddleware(sse_app, allowed_hosts=["*"])
+#
+# Remove the TrustedHostMiddleware import and the wrapping line — they're
+# redundant now that the fix above neutralizes the check at the class level.
+# Leave the `sse_app = mcp.sse_app()` line as-is.
+
+
+# ---------------------------------------------------------------------------
+# SANITY CHECK
+# ---------------------------------------------------------------------------
+# After rebuilding the container:
+#
+#   sudo docker-compose -f docker-compose.prod.yml up -d --build --force-recreate
+#   sudo docker logs -f telegram-mcp
+#
+# You should NOT see `Invalid Host header: localhost` in the logs when you hit
+# the endpoint through nginx. A clean `GET /sse HTTP/1.1 200 OK` means it
+# worked.
